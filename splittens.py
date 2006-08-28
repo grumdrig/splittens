@@ -9,7 +9,14 @@ outcomes = range(17, 23)
 upcards = range(2, 11) + [1]
 paircards = upcards + []
 paircards.reverse()
-  
+
+# Enumeration (of sorts) of the plays which can be made
+STAY = ' -- '
+HIT = 'HHHH'
+DOUBLEDOWN = '2**2'
+SPLIT = '<sp>'
+BUST = 'bust'
+
 dealer_hard_hand_outcome = {}
 dealer_soft_hand_outcome = {}
 # fill in the outcome arrays with zeroes
@@ -75,73 +82,46 @@ for showing in upcards:
       for o in outcomes:
         dealer_showing_outcome[showing][o] += outs[o] * 1.0/13.0
 
-return_for_staying = {}
-for showing in upcards:
-  return_for_staying[showing] = {}
-  outs = dealer_showing_outcome[showing]
-  for hand in range(21, 2-1, -1):
-    returns = 0
+_r4stay = {}
+def return_for_staying(dealer_showing, hand):
+  if hand > 21: return 0.0
+  cache_key = (dealer_showing, hand)
+  if not _r4stay.has_key(cache_key):
+    outs = dealer_showing_outcome[dealer_showing]
+    expected_return = 0.0
     for dealer_total in outcomes:
       if dealer_total > 21 or dealer_total < hand:
-        returns += 2 * outs[dealer_total]  # stake + winnings
+        expected_return += 2 * outs[dealer_total]  # stake + winnings
       elif dealer_total == hand:
-        returns += outs[dealer_total]  # push
+        expected_return += outs[dealer_total]  # push
       # Other cases (including bj) return 0
-    return_for_staying[showing][hand] = returns
+    _r4stay[cache_key] = expected_return
+  return _r4stay[cache_key]
 
-hard_return_for_one_hit = {}
-for showing in upcards:
-  hard_return_for_one_hit[showing] = {}
-  outs = dealer_showing_outcome[showing]
-  for hand in range(21, 2-1, -1):
-    returns = 0.0
-    for hit in hits:
-      player_total = min(hand + hit, 22)
-      if hit == 1 and player_total + 10 < 22:
-        player_total += 10
-      # Use the staying chart here; why not
-      if player_total <= 21:
-        for dealer_total in outcomes:
-          if dealer_total > 21 or dealer_total < player_total:
-            returns += 2 * outs[dealer_total] * 1.0/13.0  # stake + winnings
-          elif dealer_total == player_total:
-            returns += outs[dealer_total] * 1.0/13.0 # push
-          # Other cases (including bj) return 0
-    hard_return_for_one_hit[showing][hand] = returns
-
-soft_return_for_one_hit = {}
-for showing in upcards:
-  soft_return_for_one_hit[showing] = {}
-  outs = dealer_showing_outcome[showing]
-  for hand in range(21, 12-1, -1):
+_r41hit = {}
+def return_for_one_hit(showing, hand, soft):
+  cache_key = (showing, hand, soft)
+  if not _r41hit.has_key(cache_key):
+    outs = dealer_showing_outcome[showing]
     returns = 0.0
     for hit in hits:
       player_total = hand + hit
-      if player_total > 21:
+      if player_total > 21 and soft:
         player_total -= 10
-      if player_total <= 21:
-        for dealer_total in outcomes:
-          if dealer_total > 21 or dealer_total < player_total:
-            returns += 2 * outs[dealer_total] * 1.0/13.0  # stake + winnings
-          elif dealer_total == player_total:
-            returns += outs[dealer_total] * 1.0/13.0 # push
-          # Other cases (including bj) return 0
-    soft_return_for_one_hit[showing][hand] = returns
+      if hit == 1 and player_total + 10 <= 21:
+        player_total += 10
+      returns += return_for_staying(showing, player_total) / 13.0
+    _r41hit[cache_key] = returns
+  return _r41hit[cache_key]
 
 _r4dd = {}
 def return_for_double_down(dealer_showing, hand, soft):
   key = (dealer_showing, hand, soft)
   if not _r4dd.has_key(key):
-    hitter = (soft and soft_return_for_one_hit or hard_return_for_one_hit)
-    _r4dd[key] = hitter[dealer_showing][hand] * 2.0 - 1.0
+    _r4dd[key] = return_for_one_hit(dealer_showing, hand, soft) * 2.0 - 1.0
   return _r4dd[key]
 
 _r4h = {}
-BUST = 'bust'
-STAY = ' -- '
-HIT = 'HHHH'
-DOUBLEDOWN = '2**2'
-SPLIT = '<sp>'
 def best_play(dealer_showing, hand, soft, first_two, pair):
   if hand >= 22 and soft:
     hand -= 10
@@ -158,7 +138,7 @@ def best_play(dealer_showing, hand, soft, first_two, pair):
   if first_two and hand == 21:
     best_idea,best_return = STAY,2.5
   else:
-    stay = return_for_staying[dealer_showing][hand]
+    stay = return_for_staying(dealer_showing, hand)
     best_idea,best_return = STAY,stay
     if hand < 18:  # (We'll boldly assume you shouldn't hit 18+)
       play = 0.0
@@ -181,33 +161,35 @@ def best_play(dealer_showing, hand, soft, first_two, pair):
     if first_two and pair:
       card = hand / 2
       if hand == 12: card = 1
-      split = return_for_split[dealer_showing][card]
+      split = return_for_split(dealer_showing, card)
       if split > best_return:
         best_idea,best_return = SPLIT,split
   _r4h[key] = best_idea,best_return
   return best_idea,best_return
 
 
-return_for_split = {}
-for showing in upcards:
-  return_for_split[showing] = {}
-  outs = dealer_showing_outcome[showing]
-  for card in hits:
-    returns = -1.0  # not positive about the math here
-    for hit in hits:
-      h2 = card + hit
-      s2 = card == 1 or hit == 1
-      if s2: h2 += 10
-      dummy,value = best_play(showing,
-                              h2,
-                              s2,
-                              True,
-                              False) # NB:
-      # To avoid problematic recursion, we claim this is not a pair.
-      # Really, you're allowed to split up to 3 times in a hand, but
-      # we'll just ignore that and leave it as a TODO.
-      returns += 2.0 * value * 1.0/13.0
-    return_for_split[showing][card] = returns
+_r4split = {}
+def return_for_split(dealer_showing, paircard):
+  key = (dealer_showing, paircard)
+  if not _r4split.has_key(key):
+    for card in hits:
+      expected_return = -1.0  # account for the extra bet
+      # (but not positive about the math here)
+      for hit in hits:
+        hand = paircard + hit
+        soft = paircard == 1 or hit == 1
+        if soft: hand += 10
+        dummy,value = best_play(dealer_showing,
+                                hand,
+                                soft,
+                                True,
+                                False) # NB:
+        # To avoid problematic recursion, we claim this is not a pair.
+        # Really, you're allowed to split up to 3 times in a hand, but
+        # we'll just ignore that and leave it as a TODO.
+        expected_return += 2.0 * value * 1.0/13.0
+    _r4split[key] = expected_return
+  return _r4split[key]
 
 
 def main():
@@ -240,7 +222,7 @@ def main():
   for hand in range(21, 12-1, -1):
     print "%4d" % hand,
     for showing in upcards:
-      print "%4.2f" % return_for_staying[showing][hand],
+      print "%4.2f" % return_for_staying(showing, hand),
     print
 
   print "Return expected for one hit"
@@ -249,13 +231,13 @@ def main():
   for hand in range(21, 12-1, -1):
     print "%4d" % hand,
     for showing in upcards:
-      print "%4.2f" % hard_return_for_one_hit[showing][hand],
+      print "%4.2f" % return_for_one_hit(showing, hand, False),
     print
   print "Soft", ("%4d " * len(upcards)) % tuple(upcards)
   for hand in range(21, 12-1, -1):
     print "%4d" % hand,
     for showing in upcards:
-      print "%4.2f" % soft_return_for_one_hit[showing][hand],
+      print "%4.2f" % return_for_one_hit(showing, hand, True),
     print
 
   print "Strategy delta, one hit - stay"
@@ -264,15 +246,15 @@ def main():
   for hand in range(21, 12-1, -1):
     print "%4d" % hand,
     for showing in upcards:
-      print "%5.2f" % (hard_return_for_one_hit[showing][hand] -
-                       return_for_staying[showing][hand]),
+      print "%5.2f" % (return_for_one_hit(showing, hand, False) -
+                       return_for_staying(showing, hand)),
     print
   print "Soft", ("%5d " * len(upcards)) % tuple(upcards)
   for hand in range(21, 12-1, -1):
     print "%4d" % hand,
     for showing in upcards:
-      print "%5.2f" % (soft_return_for_one_hit[showing][hand] -
-                       return_for_staying[showing][hand]),
+      print "%5.2f" % (return_for_one_hit(showing, hand, True) -
+                       return_for_staying(showing, hand)),
     print
 
   print "Return expected for split"
@@ -281,25 +263,23 @@ def main():
   for card in upcards:
     print "%3ds" % card,
     for showing in upcards:
-      print "%4.2f" % return_for_split[showing][card],
+      print "%4.2f" % return_for_split(showing, card),
     print
 
   print
-  print "Strategy delta, split - play"
+  print "Strategy delta, split - 1hit/stay"
   print "      Showing"
   print "Pair", ("%5d " * len(upcards)) % tuple(upcards)
   for card in upcards:
     print "%3ds" % card,
     hand = card * 2
-    if card == 1:
+    soft = card == 1
+    if soft:
       hand += 10
-      hitret = soft_return_for_one_hit
-    else:
-      hitret = hard_return_for_one_hit
     for showing in upcards:
-      print "%5.2f" % (return_for_split[showing][card] -
-                       max(hitret[showing][hand],
-                           return_for_staying[showing][hand])),
+      print "%5.2f" % (return_for_split(showing, card) -
+                       max(return_for_one_hit(showing, hand, soft),
+                           return_for_staying(showing, hand))),
     print
 
   print "Return expected for double down"
@@ -341,6 +321,18 @@ def main():
       print best_play(showing, hand, soft, True, True)[0],
     print
 
+  """
+  print "COSTS PER BAD MOVE"
+  price_out("split 10s when dealer shows 6",
+            [(s,h
+  
+    you must split tens when dealer shows a 6 ($0.10)
+  split tens when dealer shows 7 or less ($1.10)
+  split everything but 5s and 10s
+  split everything unless dealer shows 10,A
+  """
+
+  
 # TODO: figure for multiple hits!!!!!
 
 def card():
