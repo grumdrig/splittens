@@ -25,15 +25,45 @@ Splitting tens!
   split everything but 5s and 10s
   split everything unless dealer shows 10,A
 
+Doubling alot
+  double down on 10,A always
+  double down on 9 if dealer shows < 9
+  double down on 8 if dealer shows bust
+  double down on 7-12 if dealer shows bust
+  double down on 4-13 if dealer shows 5,6
+  double down on A2-A8 if dealer shows bust
+  double down on A9 if dealer shows bust
+  double down on A6 always
+  double down on A7 always
+  double down on soft anything (but BJ) if dealer shows < 9
 
-Pair     2     3     4     5     6     7     8     9    10     1
-  2s  0.20  0.23  0.25  0.29  0.35  0.44  0.34  0.21 -0.03  0.07
-  3s  0.14  0.18  0.22  0.26  0.32  0.35  0.27  0.15 -0.08  0.01
-  4s -0.06 -0.02  0.02  0.08  0.15 -0.05 -0.07 -0.09 -0.27 -0.23
-  5s -0.37 -0.32 -0.26 -0.20 -0.11 -0.39 -0.47 -0.57 -0.65 -0.58
-  6s  0.03  0.10  0.16  0.21  0.28 -0.01 -0.08 -0.17 -0.33 -0.23
-  7s  0.14  0.18  0.22  0.27  0.33  0.27  0.04 -0.08 -0.24 -0.09
-  8s  0.31  0.34  0.37  0.40  0.44  0.64  0.43  0.18 -0.04  0.13
-  9s  0.06  0.09  0.13  0.16  0.21 -0.05  0.09  0.12 -0.19 -0.10
- 10s -0.18 -0.14 -0.11 -0.06 -0.01 -0.16 -0.27 -0.41 -0.44 -0.33
-  1s  1.16  1.17  1.18  1.21  1.26  1.33  1.30  1.21  1.06  1.12
+Hit when you should stay
+  hit soft 18 when dealer shows 2,A
+  hit 12 when dealer shows bust [4,5,6]
+  hit 12-15 when dealer shows 2,3
+  hit 12-14 when dealer shows 4,5,6
+  hit 17 when dealer shows 8,9,10
+
+Why so cheap to hit A8 (19) when dealer shows an A?
+Bug?
+The A8 wins 53% of the time and pushes 13%, so call it 60% winning.
+(TODO: But then why is the expected return < 1?)
+hit outcome wins improves
+2   21 -    91%  1
+3   12 H         1/6+
+4   13 H         1/6+
+5   14 H         1/6+
+6   15 H         1/6
+7   16 -    25%  0
+8   17 -    32%  0
+9   18 -    39%  0
+T   19 -    60%  -
+J   19 -    60%  -
+Q   19 -    60%  -
+K   19 -    60%  -
+A   20 -    75%  1
+
+Chance of each outcome given dealer's up card
+Shown  17  18  19  20  21 bust bj
+   1:  14  14  13  13  18  25   0    100.0
+

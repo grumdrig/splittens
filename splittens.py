@@ -2,6 +2,25 @@
 
 """Figure out my own dang statistics on how to play 21"""
 
+PEEK_UNDER_10S = True
+
+# TODO:
+PAYOUT_FOR_NATURALS = 1.5  # sometimes 1.0
+DEALER_BJ_WITH_10_UP_PUSHES_21 = False
+FIVE_CARD_21_PAYOUT = 1.0  # can be 2.0
+DOUBLE_NOT_HIT_AFTER_SPLITTING_ACES = False  # huh?
+MAY_DOUBLE_AFTER_SPLIT = True
+DOUBLE_ON_3_OR_MORE_CARDS = False
+MINIMUM_TO_DOUBLE = 2  # can be 9,10,11
+EARLY_SURRENDER = False
+EARLY_SURRENDER_VS_10 = False
+DEALER_HITS_SOFT_17 = False
+LATE_SURRENDER = False
+NUM_SPLITS = 1  # often 3
+DEALER_WINS_PUSHES = False
+
+
+
 i13 = 1.0/13.0  # 1/13 is about 7.7 %
 
 hits = [min(10,r) for r in range(1,14)]
@@ -56,21 +75,21 @@ for showing in upcards:
     dealer_showing_outcome[showing][o] = 0.0
   for holecard in hits:
     if showing == 1:
-      if holecard == 10:
-        # This would have been a blackjack and your money's gone
-        # already, so at decision-making time, we know the holecard
-        # ain't a 10...
-        holecardchance = 0.0
-      else:
-        # ...this all other cards will have a better chance of appearing.
-        holdcardchance = 1.0/9.0
+      holecardchance = (holecard != 10) and 1.0/9.0 or 0.0
+      # This A10 would have been a blackjack and your money's gone
+      # already, so at decision-making time, we know the holecard
+      # ain't a 10 thus all other cards will have a better chance of
+      # appearing.
+    elif PEEK_UNDER_10S and showing == 10:
+      holecardchance = (holecard != 1) and 1.0/12.0 or 0.0
+      # Same idea when those are the rules
     else:
       # But normally, there's a 1/13 chance of each rank. Of course I
       # could speed the calculation up a trifle by lumping the 10s &
       # royals together
       holecardchance = 1.0/13.0
     total = showing + holecard
-    if (showing == 10 and holecard == 1):
+    if not PEEK_UNDER_10S and (showing == 10 and holecard == 1):
       # Hidden blackjack is worse than average case because it wins
       # would-be pushes
       dealer_showing_outcome[showing]['bj'] += holecardchance
@@ -83,8 +102,9 @@ for showing in upcards:
         dealer_showing_outcome[showing][o] += outs[o] * 1.0/13.0
 
 _r4stay = {}
-def return_for_staying(dealer_showing, hand):
+def return_for_staying(dealer_showing, hand, first_two):
   if hand > 21: return 0.0
+  if hand == 21 and first_two: return 2.5  # Blackjack!
   cache_key = (dealer_showing, hand)
   if not _r4stay.has_key(cache_key):
     outs = dealer_showing_outcome[dealer_showing]
@@ -110,7 +130,7 @@ def return_for_one_hit(showing, hand, soft):
         player_total -= 10
       if hit == 1 and player_total + 10 <= 21:
         player_total += 10
-      returns += return_for_staying(showing, player_total) / 13.0
+      returns += return_for_staying(showing, player_total, False) / 13.0
     _r41hit[cache_key] = returns
   return _r41hit[cache_key]
 
@@ -121,27 +141,35 @@ def return_for_double_down(dealer_showing, hand, soft):
     _r4dd[key] = return_for_one_hit(dealer_showing, hand, soft) * 2.0 - 1.0
   return _r4dd[key]
 
-_r4h = {}
-def best_play(dealer_showing, hand, soft, first_two, pair):
-  if hand >= 22 and soft:
-    hand -= 10
-    soft = False
-  if hand >= 22:
-    return BUST,0.0  # don't bother to cache busts
-  if not first_two:
-    pair = False
+def bestof(strategies):
+  best_idea = None
+  for idea,expectation in strategies.items():
+    if not best_idea or expectation > best_expectation:
+      best_idea,best_expectation = idea,expectation
+  return best_idea,best_expectation
 
+def best_play(dealer_showing, hand, soft, first_two, pair):
+  return bestof(strategic_returns(dealer_showing, hand, soft, first_two, pair))
+
+_expret = {}
+def strategic_returns(dealer_showing, hand, soft, first_two, pair):
+  """Returns a dict giving each move and its expected return"""
   # Peek in cache
   key = (dealer_showing, hand, soft, first_two, pair)
-  if _r4h.has_key(key): return _r4h[key]
+  if not _expret.has_key(key):
+    result = { STAY: 0.0 }
+    if hand >= 22 and soft:
+      hand -= 10
+      soft = False
+    if not first_two:
+      pair = False  # Just in case.
 
-  if first_two and hand == 21:
-    best_idea,best_return = STAY,2.5
-  else:
-    stay = return_for_staying(dealer_showing, hand)
-    best_idea,best_return = STAY,stay
-    if hand < 18:  # (We'll boldly assume you shouldn't hit 18+)
-      play = 0.0
+    if hand <= 21:
+      # Stay?
+      result[STAY] = return_for_staying(dealer_showing, hand, first_two)
+
+      # Hit?
+      result[HIT] = 0.0
       for hit in hits:
         h2 = hand + hit
         s2 = soft
@@ -151,21 +179,20 @@ def best_play(dealer_showing, hand, soft, first_two, pair):
         if s2 and h2 > 21:
           s2 = False
           h2 -= 10
-        play += best_play(dealer_showing, h2, s2, False, False)[1] / 13.0
-      if play > best_return:
-        best_idea,best_return = HIT,play
-    if first_two:
-      ddown = return_for_double_down(dealer_showing, hand, soft)
-      if ddown > best_return:
-        best_idea,best_return = DOUBLEDOWN,ddown
-    if first_two and pair:
-      card = hand / 2
-      if hand == 12: card = 1
-      split = return_for_split(dealer_showing, card)
-      if split > best_return:
-        best_idea,best_return = SPLIT,split
-  _r4h[key] = best_idea,best_return
-  return best_idea,best_return
+        result[HIT] += (best_play(dealer_showing, h2, s2, False, False)[1] /
+                        13.0)
+
+      # Double down?
+      if first_two:
+        result[DOUBLEDOWN] = return_for_double_down(dealer_showing, hand, soft)
+
+      # Split?
+      if first_two and pair:
+        card = hand / 2
+        if soft: card = 1
+        result[SPLIT] = return_for_split(dealer_showing, card)
+    _expret[key] = result
+  return _expret[key]
 
 
 _r4split = {}
@@ -190,6 +217,60 @@ def return_for_split(dealer_showing, paircard):
         expected_return += 2.0 * value * 1.0/13.0
     _r4split[key] = expected_return
   return _r4split[key]
+
+def avg_cost(showings, hands, soft, action):
+  """Average cost per stupid maneuver for doing the wrong thing"""
+  costs = []
+  pair = action == SPLIT
+  for dealer_showing in (showings or upcards):
+    for hand in hands:
+      if action == STAY:
+        forced = return_for_staying(dealer_showing, hand, True)
+      elif action == HIT:
+        forced = return_for_one_hit(dealer_showing, hand, soft)
+      elif action == DOUBLEDOWN:
+        forced = return_for_double_down(dealer_showing, hand, soft)
+      elif action == SPLIT:
+        card = hand
+        hand = card * 2
+        soft = card == 1
+        if soft: hand += 10
+        forced = return_for_split(dealer_showing, card)
+      best_idea,best_expectation = best_play(dealer_showing, hand, soft,
+                                             True, pair)
+      if best_expectation > forced:
+        costs.append(best_expectation - forced)
+  if not costs:
+    return 0.0
+  else:
+    return sum(costs) / len(costs)
+
+
+FOLLY_BET = 10.0
+def show_folly(action, showings, hands, soft=False):
+  readable = {
+    STAY: "stay",
+    HIT: "hit",
+    DOUBLEDOWN: "double",
+    SPLIT: "split"
+    }
+  print readable[action],
+  if (action != SPLIT) and not soft:
+    print "hard",
+  if soft:
+    dhands = [("A" + str(h-10)) for h in hands]
+  else:
+    dhands = map(str, hands)
+  if (action == SPLIT):
+    dhands = [(card+"s") for card in dhands]
+  print ",".join(dhands),
+  if showings:
+    dsw = { 1: 'A', 10: 'T' }
+    print "when dealer shows", ",".join([dsw.get(s,str(s)) for s in showings]),
+  else:
+    print "always",
+  print ":",
+  print "$%4.2f" % (FOLLY_BET * avg_cost(showings, hands, soft, action))
 
 
 def main():
@@ -222,7 +303,7 @@ def main():
   for hand in range(21, 12-1, -1):
     print "%4d" % hand,
     for showing in upcards:
-      print "%4.2f" % return_for_staying(showing, hand),
+      print "%4.2f" % return_for_staying(showing, hand, True),
     print
 
   print "Return expected for one hit"
@@ -247,14 +328,14 @@ def main():
     print "%4d" % hand,
     for showing in upcards:
       print "%5.2f" % (return_for_one_hit(showing, hand, False) -
-                       return_for_staying(showing, hand)),
+                       return_for_staying(showing, hand, True)),
     print
   print "Soft", ("%5d " * len(upcards)) % tuple(upcards)
   for hand in range(21, 12-1, -1):
     print "%4d" % hand,
     for showing in upcards:
       print "%5.2f" % (return_for_one_hit(showing, hand, True) -
-                       return_for_staying(showing, hand)),
+                       return_for_staying(showing, hand, True)),
     print
 
   print "Return expected for split"
@@ -279,9 +360,10 @@ def main():
     for showing in upcards:
       print "%5.2f" % (return_for_split(showing, card) -
                        max(return_for_one_hit(showing, hand, soft),
-                           return_for_staying(showing, hand))),
+                           return_for_staying(showing, hand, True))),
     print
 
+  print
   print "Return expected for double down"
   print "      Showing"
   print "Hard", ("%4d " * len(upcards)) % tuple(upcards)
@@ -297,6 +379,7 @@ def main():
       print "%5.2f" % return_for_double_down(showing, hand, soft=True),
     print
 
+  print
   print "Best play"
   print "      Showing"
   print "Hard", ("%4d " * len(upcards)) % tuple(upcards)
@@ -322,17 +405,164 @@ def main():
     print
 
   """
-  print "COSTS PER BAD MOVE"
-  price_out("split 10s when dealer shows 6",
-            [(s,h
-  
-    you must split tens when dealer shows a 6 ($0.10)
-  split tens when dealer shows 7 or less ($1.10)
-  split everything but 5s and 10s
-  split everything unless dealer shows 10,A
+  def strats(a,b,c,d,e):
+    r = strategic_returns(a,b,c,d,e)
+    rename = {
+      STAY: '.',
+      HIT: 'h',
+      DOUBLEDOWN: '2',
+      SPLIT: '/'
+      }
+    a = [(v,rename[k]) for k,v in r.items()]
+    a.sort()
+    a = ''.join([n for k,n in a]) + "    "
+    return a[:4]
+     
+  print "Strategic ideas in order"
+  print "      Showing"
+  print "Hard", ("%4d " * len(upcards)) % tuple(upcards)
+  for hand in range(20, 4-1, -1):
+    print "%4d" % hand,
+    for showing in upcards:
+      print strats(showing, hand, False, True, False),
+    print
+  print "Soft", ("%4d " * len(upcards)) % tuple(upcards)
+  for hand in range(20, 12-1, -1):
+    print "%4d" % hand,
+    for showing in upcards:
+      print strats(showing, hand, True, True, False),
+    print
+  print "Pair", ("%4d " * len(upcards)) % tuple(upcards)
+  for card in paircards:
+    print "%3ds" % card,
+    for showing in upcards:
+      hand = card * 2
+      soft = card == 1
+      if soft: hand += 10
+      print strats(showing, hand, soft, True, True),
+    print
   """
 
-  
+  print
+  print "Cost to always split pairs"
+  print "Pair", ("%5d " * len(upcards)) % tuple(upcards)
+  for card in paircards:
+    hand = card * 2
+    soft = card == 1
+    if soft: hand += 10
+    print "%3ds" % card,
+    for showing in upcards:
+      strategies = strategic_returns(showing, hand, soft, True, True)
+      best = bestof(strategies)[1]
+      jerk = strategies.get(SPLIT)
+      if best > jerk:
+        print "%5.2f" % (best-jerk),
+      else:
+        print "     ",
+    print 
+
+  print
+  print "Cost NOT to split a pair"
+  print "Pair", ("%5d " * len(upcards)) % tuple(upcards)
+  for card in paircards:
+    hand = card * 2
+    soft = card == 1
+    if soft: hand += 10
+    print "%3ds" % card,
+    for showing in upcards:
+      strategies = strategic_returns(showing, hand, soft, True, True)
+      best = bestof(strategies)[1]
+      del strategies[SPLIT]
+      unsplit = bestof(strategies)[1]
+      if best > unsplit:
+        print "%5.2f" % (best-unsplit),
+      else:
+        print "     ",
+    print 
+
+  print
+  print "Cost to double down"
+  print "Hard", ("%5d " * len(upcards)) % tuple(upcards)
+  for hand in range(20, 4-1, -1):
+    print "%4d" % hand,
+    for showing in upcards:
+      strategies = strategic_returns(showing, hand, False, True, False)
+      best = bestof(strategies)[1]
+      jerk = return_for_double_down(showing, hand, soft=False)
+      if best > jerk:
+        print "%5.2f" % (best-jerk),
+      else:
+        print "     ",
+    print
+  print "Soft", ("%5d " * len(upcards)) % tuple(upcards)
+  for hand in range(21, 12-1, -1):
+    print "%4d" % hand,
+    for showing in upcards:
+      strategies = strategic_returns(showing, hand, True, True, False)
+      best = bestof(strategies)[1]
+      jerk = return_for_double_down(showing, hand, soft=True)
+      if best > jerk:
+        print "%5.2f" % (best-jerk),
+      else:
+        print "     ",
+    print
+
+  print
+  print "Cost to hit when you should stay"
+  print "Hard", ("%5d " * len(upcards)) % tuple(upcards)
+  for hand in range(20, 4-1, -1):
+    print "%4d" % hand,
+    for showing in upcards:
+      strategies = strategic_returns(showing, hand, False, True, False)
+      best = bestof(strategies)[1]
+      jerk = strategies.get(HIT)
+      if jerk != None and best > jerk and bestof(strategies)[0] == STAY:
+        print "%5.2f" % (best-jerk),
+      else:
+        print "     ",
+    print
+  print "Soft", ("%5d " * len(upcards)) % tuple(upcards)
+  for hand in range(21, 12-1, -1):
+    print "%4d" % hand,
+    for showing in upcards:
+      strategies = strategic_returns(showing, hand, True, True, False)
+      best = bestof(strategies)[1]
+      jerk = strategies.get(HIT)
+      if jerk != None and best > jerk and bestof(strategies)[0] == STAY:
+        print "%5.2f" % (best-jerk),
+      else:
+        print "     ",
+    print
+
+  #print
+  #print "Chance of each player hand total given optimal play"
+
+  print "COSTS PER BAD MOVE FOR A $%4.2f BET" % FOLLY_BET
+  show_folly(SPLIT, [6], [10])
+  show_folly(SPLIT, [5,6], [10])
+  show_folly(SPLIT, [2,3,4,5,6,7], [10])
+  show_folly(SPLIT, None, [1,2,3,6,7,8,9])
+  show_folly(SPLIT, None, [1,2,3,4,6,7,8,9])
+  show_folly(SPLIT, [2,3,4,5,6,7,8,9], paircards)
+  show_folly(DOUBLEDOWN, None, [10,11])
+  show_folly(DOUBLEDOWN, [2,3,4,5,6,7,8], [9])
+  show_folly(DOUBLEDOWN, [2,3,4,5,6], [8])
+  show_folly(DOUBLEDOWN, [2,3,4,5,6], [7,8,9,10,11,12])
+  show_folly(DOUBLEDOWN, [5,6], [4,5,6,7,8,9,10,11,12,13])
+  show_folly(DOUBLEDOWN, [2,3,4,5,6], [13,14,15,16,17,18], True)
+  show_folly(DOUBLEDOWN, [2,3,4,5,6], [12,13,14,15,16,17,18,19], True)
+  show_folly(DOUBLEDOWN, [2,3,4,5,6], [20], True)
+  show_folly(DOUBLEDOWN, None, [17], True)
+  show_folly(DOUBLEDOWN, None, [18], True)
+  show_folly(DOUBLEDOWN, [2,3,4,5,6,7,8], range(12, 21), True)
+  show_folly(HIT, [4,5,6], [12])
+  show_folly(HIT, [2,3], [12,13,14,15])
+  show_folly(HIT, [4,5,6], [12,13,14])
+  show_folly(HIT, [8,9,10], [17])
+  show_folly(HIT, [2,1], [18], True)
+  show_folly(HIT, None, [18], True)
+
+
 # TODO: figure for multiple hits!!!!!
 
 def card():
