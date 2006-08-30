@@ -12,12 +12,15 @@ DOUBLE_NOT_HIT_AFTER_SPLITTING_ACES = False  # huh?
 MAY_DOUBLE_AFTER_SPLIT = True
 DOUBLE_ON_3_OR_MORE_CARDS = False
 MINIMUM_TO_DOUBLE = 2  # can be 9,10,11
-EARLY_SURRENDER = False
-EARLY_SURRENDER_VS_10 = False
 DEALER_HITS_SOFT_17 = False
-LATE_SURRENDER = False
 NUM_SPLITS = 1  # often 3
-DEALER_WINS_PUSHES = False
+
+# Other rule variations I see no reason to implement:
+# Surrender: Doesn't affect this business
+# Dealer wins pushes: Don't play if this is the case
+# EARLY_SURRENDER = False
+# EARLY_SURRENDER_VS_10 = False
+# LATE_SURRENDER = False
 
 
 
@@ -254,19 +257,30 @@ def show_folly(action, showings, hands, soft=False):
     DOUBLEDOWN: "double",
     SPLIT: "split"
     }
+  dsw = { 1: 'A', 10: 'T' }
   print readable[action],
   if (action != SPLIT) and not soft:
     print "hard",
-  if soft:
-    dhands = [("A" + str(h-10)) for h in hands]
+  def disp_hand(hand):
+    if (action == SPLIT):
+      return dsw.get(hand, str(hand)) + "s"
+    elif soft:
+      return "A" + str(hand-10)
+    else:
+      return str(hand)
+  if len(hands) > 2 and hands == range(hands[0], hands[0]+len(hands)):
+    dhands = [disp_hand(hands[0]) + "-" + disp_hand(hands[-1])]
   else:
-    dhands = map(str, hands)
-  if (action == SPLIT):
-    dhands = [(card+"s") for card in dhands]
+    dhands = map(disp_hand, hands)
   print ",".join(dhands),
   if showings:
-    dsw = { 1: 'A', 10: 'T' }
-    print "when dealer shows", ",".join([dsw.get(s,str(s)) for s in showings]),
+    dshow = [s for s in showings]
+    if len(dshow) > 2 and dshow == range(dshow[0], dshow[0]+len(dshow)):
+      dshow = [str(dshow[0]) + '-' + str(dshow[-1])]
+    if dshow[:5] == [2,3,4,5,6]:
+      dshow[:5] = ['BUST']
+    dshow = [dsw.get(s,str(s)) for s in dshow]
+    print "when dealer shows", ",".join(dshow),
   else:
     print "always",
   print ":",
@@ -541,6 +555,7 @@ def main():
   show_folly(SPLIT, [6], [10])
   show_folly(SPLIT, [5,6], [10])
   show_folly(SPLIT, [2,3,4,5,6,7], [10])
+  show_folly(SPLIT, [2,3,4,5,6,7,8], [1,2,3,4,6,7,8,9])
   show_folly(SPLIT, None, [1,2,3,6,7,8,9])
   show_folly(SPLIT, None, [1,2,3,4,6,7,8,9])
   show_folly(SPLIT, [2,3,4,5,6,7,8,9], paircards)
