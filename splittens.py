@@ -2,27 +2,56 @@
 
 """Figure out my own dang statistics on how to play 21"""
 
+DEALER_HITS_SOFT_17 = True
+MAY_DOUBLE_AFTER_SPLIT = True
+DOUBLE_ALLOWED_ON = None  # can be [9,10,11], [10,11], [11] or None meaning all
+
 PEEK_UNDER_10S = True
+PAYOUT_FOR_NATURALS = 1.5  # Is sometimes 1.0
+RESPLIT_ACES = False
 
 # TODO:
-PAYOUT_FOR_NATURALS = 1.5  # sometimes 1.0
-DEALER_BJ_WITH_10_UP_PUSHES_21 = False
-FIVE_CARD_21_PAYOUT = 1.0  # can be 2.0
-DOUBLE_NOT_HIT_AFTER_SPLITTING_ACES = False  # huh?
-MAY_DOUBLE_AFTER_SPLIT = True
-DOUBLE_ON_3_OR_MORE_CARDS = False
-MINIMUM_TO_DOUBLE = 2  # can be 9,10,11
-DEALER_HITS_SOFT_17 = False
 NUM_SPLITS = 1  # often 3
+NUM_DECKS = 99999999
+RESPLIT_ACES = True
 
-# Other rule variations I see no reason to implement:
-# Surrender: Doesn't affect this business
-# Dealer wins pushes: Don't play if this is the case
-# EARLY_SURRENDER = False
-# EARLY_SURRENDER_VS_10 = False
-# LATE_SURRENDER = False
+def vegas_downtown_rules():
+  global DEALER_HITS_SOFT_17, MAY_DOUBLE_AFTER_SPLIT, \
+         DOUBLE_ALLOWED_ON, NUM_SPLITS
+  DEALER_HITS_SOFT_17 = True
+  MAY_DOUBLE_AFTER_SPLIT = True
+  DOUBLE_ALLOWED_ON = None
+  NUM_SPLITS = 3 # todo
+  
+def vegas_strip_rules():
+  global DEALER_HITS_SOFT_17, MAY_DOUBLE_AFTER_SPLIT, \
+         DOUBLE_ALLOWED_ON, NUM_SPLITS
+  vegas_downtown_rules()
+  DEALER_HITS_SOFT_17 = False
 
+def reno_rules():
+  global DEALER_HITS_SOFT_17, MAY_DOUBLE_AFTER_SPLIT, \
+         DOUBLE_ALLOWED_ON, NUM_SPLITS
+  DEALER_HITS_SOFT_17 = True
+  MAY_DOUBLE_AFTER_SPLIT = True
+  DOUBLE_ALLOWED_ON = [10,11]
+  NUM_SPLITS = 3 # todo
 
+lake_tahoe_rules = reno_rules
+
+def atlantic_city_rules():
+  global DEALER_HITS_SOFT_17, MAY_DOUBLE_AFTER_SPLIT, \
+         DOUBLE_ALLOWED_ON, NUM_SPLITS
+  DEALER_HITS_SOFT_17 = False
+  MAY_DOUBLE_AFTER_SPLIT = True
+  DOUBLE_ALLOWED_ON = None
+  NUM_SPLITS = 1
+
+vegas_strip_rules()
+
+# Some other rule variations I see no reason to implement:
+# - Surrender: Doesn't affect this business
+# - Dealer wins pushes: Don't play that game!
 
 i13 = 1.0/13.0  # 1/13 is about 7.7 %
 
@@ -39,37 +68,31 @@ DOUBLEDOWN = '2**2'
 SPLIT = '<sp>'
 BUST = 'bust'
 
-dealer_hard_hand_outcome = {}
-dealer_soft_hand_outcome = {}
-# fill in the outcome arrays with zeroes
-for h in range(2, 23):
-  dealer_hard_hand_outcome[h] = {}
-  dealer_soft_hand_outcome[h] = {}
-  for o in outcomes:
-    dealer_hard_hand_outcome[h][o] = 0.0
-    dealer_soft_hand_outcome[h][o] = 0.0
-for h in outcomes:
-  dealer_hard_hand_outcome[h][h] = 1.0
-  dealer_soft_hand_outcome[h-10][h] = 1.0
-# then things get more complicated
-for hand in range(16, 2-1, -1):
-  for hit in hits:
-    t = min(hand + hit, 22)
-    if hit == 1 and t + 10 < 22:
-      outs = dealer_soft_hand_outcome[t]
+_dho = {}
+def dealer_hand_outcome(hand, soft):
+  # Here hand always only counts As as 1s, and soft means 10 can be
+  # added to the hand, i.e. there are any As in it.
+  if soft and hand + 10 >= (DEALER_HITS_SOFT_17 and 18 or 17) and \
+         hand + 10 <= 21:
+    # Exercise softness when appropriate
+    hand += 10
+    soft = False
+  if hand > 22:
+    hand = 22  # normalize bust hands
+  cache_key = (hand,soft)
+  if not _dho.has_key(cache_key):
+    _dho[cache_key] = {}
+    for o in outcomes:
+      _dho[cache_key][o] = 0.0
+      _dho[cache_key][o] = 0.0
+    if hand >= 17:
+      _dho[cache_key][hand] = 1.0  # Dealer stays
     else:
-      outs = dealer_hard_hand_outcome[t]
-    for outcome,p in outs.iteritems():
-      dealer_hard_hand_outcome[hand][outcome] += p * 1.0/13.0
-  if hand + 10 < 17:
-    for hit in hits:
-      t = hand + hit
-      if t + 10 >= 22:
-        outs = dealer_hard_hand_outcome[t]
-      else:
-        outs = dealer_soft_hand_outcome[t]
-      for outcome,p in outs.iteritems():
-        dealer_soft_hand_outcome[hand][outcome] += p * 1.0/13.0
+      for hit in hits:
+        for outcome,p in dealer_hand_outcome(hand + hit,
+                                             soft or hit == 1).iteritems():
+          _dho[cache_key][outcome] += p * 1.0/13.0
+  return _dho[cache_key]
 
 dealer_showing_outcome = {}
 for showing in upcards:
@@ -97,17 +120,14 @@ for showing in upcards:
       # would-be pushes
       dealer_showing_outcome[showing]['bj'] += holecardchance
     else:
-      if (showing == 1 or holecard == 1) and total + 10 < 17:
-        outs = dealer_soft_hand_outcome[total]
-      else:
-        outs = dealer_hard_hand_outcome[total]
+      outs = dealer_hand_outcome(total, showing == 1 or holecard == 1)
       for o in outcomes:
         dealer_showing_outcome[showing][o] += outs[o] * 1.0/13.0
 
 _r4stay = {}
 def return_for_staying(dealer_showing, hand, first_two):
   if hand > 21: return 0.0
-  if hand == 21 and first_two: return 2.5  # Blackjack!
+  if hand == 21 and first_two: return 1.0 + PAYOUT_FOR_NATURALS  # Blackjack!
   cache_key = (dealer_showing, hand)
   if not _r4stay.has_key(cache_key):
     outs = dealer_showing_outcome[dealer_showing]
@@ -186,7 +206,8 @@ def strategic_returns(dealer_showing, hand, soft, first_two, pair):
                         13.0)
 
       # Double down?
-      if first_two:
+      if first_two and (DOUBLE_ALLOWED_ON == None or
+                        (hand in DOUBLE_ALLOWED_ON)):
         result[DOUBLEDOWN] = return_for_double_down(dealer_showing, hand, soft)
 
       # Split?
@@ -212,7 +233,7 @@ def return_for_split(dealer_showing, paircard):
         dummy,value = best_play(dealer_showing,
                                 hand,
                                 soft,
-                                True,
+                                MAY_DOUBLE_AFTER_SPLIT,
                                 False) # NB:
         # To avoid problematic recursion, we claim this is not a pair.
         # Really, you're allowed to split up to 3 times in a hand, but
@@ -288,20 +309,26 @@ def show_folly(action, showings, hands, soft=False):
 
 
 def main():
-  print hits, outcomes
+  print "Rules:"
+  print "- Dealer", DEALER_HITS_SOFT_17 and "HITS" or "STAYS on", "soft 17"
+  print "- Doubles after splits", \
+        MAY_DOUBLE_AFTER_SPLIT and "ALLOWED" or "DISALLOWED"
+  print "- Double allowed on", ','.join(DOUBLE_ALLOWED_ON or ["anything"])
+
+  print
   print "Chance of each outcome given dealer's hand total"
   print "Hard   17  18  19  20  21 bust"
-  for h in range(4,17):
+  for h in range(4,17+1):
     print "%4d:" % h,
     for t in outcomes:
-      print "%3d" % (dealer_hard_hand_outcome[h][t] * 100),
-    print '  ', sum(dealer_hard_hand_outcome[h].values()) * 100
+      print "%3d" % (dealer_hand_outcome(h, False)[t] * 100),
+    print '  ', sum(dealer_hand_outcome(h, False).values()) * 100
   print "Soft   17  18  19  20  21 bust"
-  for h in range(2,17-10):
+  for h in range(2,18-10):
     print "%4d:" % (h + 10),
     for t in outcomes:
-      print "%3d" % (dealer_soft_hand_outcome[h][t] * 100),
-    print '  ', sum(dealer_soft_hand_outcome[h].values()) * 100
+      print "%3d" % (dealer_hand_outcome(h, True)[t] * 100),
+    print '  ', sum(dealer_hand_outcome(h, True).values()) * 100
 
   print "Chance of each outcome given dealer's up card"
   print "Shown  17  18  19  20  21 bust bj"
@@ -577,8 +604,6 @@ def main():
   show_folly(HIT, [2,1], [18], True)
   show_folly(HIT, None, [18], True)
 
-
-# TODO: figure for multiple hits!!!!!
 
 def card():
   """Deal a card. We're assuming deep multideck here."""
