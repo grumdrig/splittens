@@ -1,0 +1,14 @@
+NAME: split 10s
+
+DESCRIPTION: Figure out stats on playing blackjack, especially to
+figure out silly plays that don't cost much.
+
+CATEGORY: research
+
+STATUS: 0.9
+
+LANGUAGE: Python
+
+TAGS: gambling 21 blackjack
+
+MAIN: splittens.py
